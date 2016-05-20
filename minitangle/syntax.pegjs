@@ -236,11 +236,9 @@ lineSingleStar = "*" !"*" inner:lineitemWithoutSingleStar* "*" { return [new Ref
 expression
 	= invoke / quote / verbatim / textblock / parting / literal
 textblock
-	= "{" inside:textline "}" {
+	= "{" inside:(textline / embeddedBlock) "}" {
 		return inside
 	}
-	/ "{" inside:embeddedBlock "}" { return inside }
-
 expressionitems
 	= head:expression rear:(OPTIONAL_EXPRESSION_SPACES expression)* tail:(OPTIONAL_EXPRESSION_SPACES ":" lineCont)? {
 		var res = [head]
@@ -282,16 +280,16 @@ invoke
 	  inside:expressionitems
 	  OPTIONAL_EXPRESSION_SPACES
 	  "]" ends:POS {
-		var call = inside.slice(0);
-		Object.defineProperty(call, 'begins', {
+		var res = inside.slice(0);
+		Object.defineProperty(res, 'begins', {
 			value: begins,
 			enumerable: false
 		});
-		Object.defineProperty(call, 'ends', {
+		Object.defineProperty(res, 'ends', {
 			value: ends,
 			enumerable: false
 		});
-		return call
+		return res;
 	}
 quote
 	= "'" it:(invoke/verbatim/textblock/identifier) { return [new Reference('quote'), it] }

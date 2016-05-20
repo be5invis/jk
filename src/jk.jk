@@ -100,6 +100,8 @@ const BE_LIST = Symbol('BE_LIST');
 const BE_EMPTY_LINE = Symbol('BE_EMPTY_LINE');
 ====
 
+--- section : Block Elements ---
+
 An Empty Line is a line contianing only spaces.
 ==== append-pegjs : BE syntaxes ====
 emptyLineElement = [ \t]* &LINE_BREAK {
@@ -112,6 +114,8 @@ A list item is a "paragraph" with a list bullet before it.
 listItem = indent:INDENTATION leader:$("-" !"-" / "+" !"+" / "*") body:textline {
 	return new BlockElement(BE_LIST, indent, leader, body)
 }
+==== append-pegjs : Token definitions ====
+INDENTATION = $([ \t]*)
 ====
 
 And a paragraph is just a, well, paragraph. However we need to wrap it into a `BlockElement`:
@@ -198,6 +202,7 @@ A Verbatim block starts with a "start line", following some body lines, or some 
 
 Its full definition is:
 ==== append-pegjs : BE syntaxes ====
+VERBATIM_LEADER = $("=" "="+)
 verbatimBlock = h:verbatimBlockStart LINE_BREAK b:verbatimBlockBody t:verbatimBlockEnd {
 	<<Verbatim block line combining>>
 }
@@ -218,7 +223,14 @@ verbatimTransfer = begins:POS indent:INDENTATION leader:VERBATIM_LEADER OPTIONAL
 }
 verbatimLine = body:$([^\r\n]*) LINE_BREAK &{return !isPrefix(storedVerbatimTerminator, body.trim())} { return body + "\n" }
 verbatimBlockEnd = indent:INDENTATION line:VERBATIM_LEADER &(LINE_BREAK/"}") & { return isPrefix(storedVerbatimTerminator, line) }
-
+====
+The function `isPrefix` is used to determine whether a string `a` is the prefix of string `b`.
+==== append-js : Syntax function definitions ====
+function isPrefix(a, b){
+	return a.length <= b.length && b.slice(0, a.length) === a;
+}
+==== append-js : Syntax function definitions ====
+var storedVerbatimTerminator;
 ==== js : Verbatim block line combining ====
 var a = [h];
 var k = [];
@@ -247,4 +259,347 @@ verbatimLineInvoke = begins:POS indent:INDENTATION leader:VERBATIM_LEADER OPTION
 } {
 	return new BlockElement(BE_NORMAL, indent, leader, it)
 }
+====
+
+--- section : Text Line ---
+
+Text Lines are the basic element of documents. A text line may contain plain text or inline elements. There are severn types in total:
+
+ * Macro Call with braces (Invoke)
+ * Inline verbatim segment
+ * Inline embedded text block
+ * Double-star quoted segment
+ * Single-star quoted segment
+ * Escape sequence
+ * and plain text.
+
+A text line should never start with these characters, unless it is used as the "trailing part" of a macro call:
+
+==== pre ====
+* + - # =
+====
+
+The syntax definition is:
+==== append-pegjs : Syntax definitions ====
+textline = ![*+\-#=] content:lineCont { return content }
+lineCont = content:lineitem* { return formLine(content) }
+lineitem                  = invoke / lineVerbatim / textblock / lineDoubleStar / lineSingleStar / lineEscape / lineText
+<<inline item syntaxes>>
+==== append-pegjs : inline item syntaxes ====
+textblock
+	= "{" inside:(textline / embeddedBlock) "}" {
+		return inside
+	}
+embeddedBlock = head:blockStart rear:(LINE_BREAK blockElement)* {
+	return formBlock([head].concat(rear.map(x=>x[1])))
+}
+lineVerbatim = it:verbatim { return [new Reference('.verbatim'), it] }
+             / it:codeSpan { return [new Reference('.codespan'), it] }
+lineEscape = "\\" special:[+#\-=`*:\[\]\{\}\\] { return [new Reference('.lit'), special]}
+           / '\\' normal:[^\r\n] { return [new Reference('.lit'), '\\' + normal] }
+
+lineText "Text" = t:$([^\r\n\[\{\\\}\]*`]+) { return [new Reference('.lit'), t] }
+
+lineitemWithoutDoubleStar = invoke / lineVerbatim / textblock                  / lineSingleStar / lineEscape / lineText
+lineDoubleStar = "**" inner:lineitemWithoutDoubleStar* "**" { return [new Reference('.inline**'), formLine(inner)] }
+
+lineitemWithoutSingleStar = invoke / lineVerbatim / textblock / lineDoubleStar                  / lineEscape / lineText
+lineSingleStar = "*" !"*" inner:lineitemWithoutSingleStar* "*" { return [new Reference('.inline*'), formLine(inner)] }
+==== append-js : Syntax function definitions ====
+function formLine (content) {
+	if(content.length === 1) return content[0]
+	else return [new Reference('.cons_line')].concat(content)
+};
+====
+
+--- section : Expression environment ---
+
+==== append-pegjs : Syntax definitions ====
+expression = invoke / quote / verbatim / textblock / parting / literal
+invoke
+	= begins:POS "["
+	  OPTIONAL_EXPRESSION_SPACES
+	  inside:expressionitems
+	  OPTIONAL_EXPRESSION_SPACES
+	  "]" ends:POS {
+		var res = inside.slice(0);
+		<<Set `begins` and `ends` of AST object `res` >>
+		return res;
+	}
+expressionitems
+	= head:expression rear:(OPTIONAL_EXPRESSION_SPACES expression)* tail:(OPTIONAL_EXPRESSION_SPACES ":" lineCont)? {
+		<<Form a macro call AST>>
+	}
+linecallItems
+	= head:expression rear:(OPTIONAL_LINE_CALL_SPACES expression)* tail:(OPTIONAL_LINE_CALL_SPACES ":" lineCont)? {
+		<<Form a macro call AST>>
+	}
+verbatimLinecallItems
+	= head:expression rear:(OPTIONAL_LINE_CALL_SPACES expression)* tail:(OPTIONAL_LINE_CALL_SPACES ":" $([^\r\n]+))? {
+		<<Form a verbatim macro call AST>>
+	}
+quote
+	= "'" it:(invoke/verbatim/textblock/identifier) { return [new Reference('quote'), it] }
+literal
+	= numberliteral
+	/ stringliteral
+parting
+	= head:(invoke/quote/identifier) rear:(("." identifier)*) {
+		var form = head;
+		if(rear) for(var j = 0; j < rear.length; j++){
+			form = ['.', form, rear[j][1].name]
+		}
+		return form;
+	}
+
+==== js : Form a macro call AST ====
+var res = [head]
+for(var j = 0; j < rear.length; j++){
+	res.push(rear[j][1])
+};
+if(tail){
+	res.push(tail[2]);
+}
+return res;
+==== js : Form a verbatim macro call AST ====
+var res = [head]
+for(var j = 0; j < rear.length; j++){
+	res.push(rear[j][1])
+};
+if(tail) {
+	res.push([new Reference('.vbt'), tail[2]]);
+}
+return res;
+==== js : Set `begins` and `ends` of AST object `res` ====
+Object.defineProperty(res, 'begins', {
+	value: begins,
+	enumerable: false
+});
+Object.defineProperty(res, 'ends', {
+	value: ends,
+	enumerable: false
+});
+====
+
+==== append-pegjs : Token definitions ====
+<<String literal>>
+<<Code span>>
+<<Verbatim segment>>
+<<Number literal>>
+<<Identifier>>
+<<Spaces>>
+==== pegjs : String literal ====
+stringliteral "String Literal"
+	= "\"" inner:stringcharacter* "\"" { return inner.join('') }
+stringcharacter
+	= [^"\\\r\n]
+	/ "\\u" digits:([a-fA-F0-9] [a-fA-F0-9] [a-fA-F0-9] [a-fA-F0-9]) { 
+		return String.fromCharCode(parseInt(digits.join(''), 16))
+	}
+	/ "\\" which:[^u\r\n] {
+		switch(which) {
+			case('n'): return "\n"
+			case('r'): return "\r"
+			case('"'): return "\""
+			case('t'): return "\t"
+			case('v'): return "\v"
+			default: return "\\" + which
+		}
+	}
+	/ "\\" NEWLINE "\\" { return '' }
+==== pegjs : Code span ====
+codeSpan "Code Span"
+	= "`" val:$([^`]+) "`" { return val }
+	/ terminator:$("`" "`"+) & { storedVerbatimTerminator = terminator; return true }
+	  inner: $(codeSpanInner*)
+	  codeSpanTerminator { return inner }
+codeSpanInner
+	= [^`]+
+	/ !codeSpanTerminator "`"
+codeSpanTerminator
+	= term:$("`" "`"+) & { term === storedVerbatimTerminator } { return }
+==== pegjs : Verbatim segment ====
+verbatim "Verbatim Segment"
+	= "{:" val:$(([^:] / ":"+ [^:\}])*) ":}" { return val }
+	/ "{" terminator:verbatimEqualSequence ":" & { storedVerbatimTerminator = terminator; return true }
+		inner:$(verbatimInner*)
+		verbatimTerminator { return inner }
+verbatimInner
+	= content:$([^:]+) { return content }
+	/ !verbatimTerminator content:":" { return content }
+verbatimTerminator
+	= ":" terminator:verbatimEqualSequence "}" & { 
+		return terminator === storedVerbatimTerminator
+	} { return }
+verbatimEqualSequence
+	= equals:$("="+) { return equals }
+==== pegjs : Number literal ====
+numberliteral "Numeric Literal"
+	= "-" positive:numberliteral { return -positive }
+	/ ("0x" / "0X") hexdigits:$([0-9a-fA-F]+) { return parseInt(hexdigits, 16) }
+	/ decimal:$([0-9]+ ("." [0-9]+)? ([eE] [+\-]? [0-9]+)?) { return decimal - 0 }
+==== pegjs : Identifier ====
+identifier "Identifier"
+	= begins:POS it:$([a-zA-Z\-_/+*<=>!?$%_&~^@#] [a-zA-Z0-9\-_/+*<=>!?$%_&~^@#]*) ends:POS {
+		var res = new Reference(it);
+		<<Set `begins` and `ends` of AST object `res` >>
+		return res;
+	}
+==== pegjs : Spaces ====
+LINE_BREAK "Line Break"
+	= "\r"? "\n" 
+NEWLINE
+	= LINE_BREAK SPACE_CHARACTER_OR_NEWLINE*
+EXPRESSION_SPACE
+	= SPACE_CHARACTER_OR_NEWLINE
+	/ COMMENT
+OPTIONAL_EXPRESSION_SPACES
+	= $(EXPRESSION_SPACE*)
+OPTIONAL_LINE_CALL_SPACES
+	= $(SPACE_CHARACTER*)
+SPACE_CHARACTER_OR_NEWLINE "Space Character or Newline"
+	= [\t\v\f \u00A0\u1680\u180E\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A\u202F\u205F\u3000\uFEFF\r\n]
+COMMENT "Comment"
+	= $(";" [^\r\n]* LINE_BREAK)
+SPACES "Space without Newline"
+	= $(SPACE_CHARACTER+)
+SPACE_CHARACTER "Space Character"
+	= [\t\v\f \u00A0\u1680\u180E\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A\u202F\u205F\u3000\uFEFF]
+====
+
+--- section : Block Formation ---
+==== append-js : Syntax function definitions ====
+const listType = {
+	"-" : new Reference('.ul'),
+	"*" : new Reference('.ul'),
+	"+" : new Reference('.ul'),
+	"#" : new Reference('.ol')
+}
+function formBlock(lines) {
+	var stack = [new BlockElement(BE_NORMAL, null, null, [new Reference('.cons_block')])];
+	var top = 0;
+	for(let line of lines) {
+		if(line.type === BE_START) {
+			if(top && stack[top].leader === line.leader) {
+				stack[top].organizeInneritems();
+				stack[top - 1].inner.push(stack[top].body);
+				top -= 1
+			}
+			top += 1;
+			stack[top] = line;
+		} else if (line.type === BE_END) {
+			// find the recentmost line item matching line.leader
+			var found = false;
+			for(var k = top; k > 0; k--) {
+				if(stack[k].leader === line.leader) {
+					found = true;
+					break;
+				}
+			}
+			if(!found) {
+				found = top;
+			}
+			if(top) {
+				stack[top].organizeInneritems();
+				stack[top - 1].inner.push(stack[top].body);
+				top -= 1
+			}
+		} else {
+			stack[top].inner.push(line);
+		}
+	}
+	while(top) {
+		stack[top].organizeInneritems();
+		stack[top - 1].inner.push(stack[top].body);
+		top -= 1
+	}
+	stack[0].organizeInneritems();
+	if(stack[0].body.length === 2 && stack[0].body[0] instanceof Reference && stack[0].body[0].name === '.cons_block'){
+		stack[0].body = stack[0].body[1];
+	}
+	return stack[0].body;
+}
+==== append-js : BlockElement methods ====
+organizeInneritems(){
+	// scans inner items of a lineItem and deal with lists
+	var stack = [[new Reference('.cons_block')]];
+	var top = 0;
+	for(let line of this.inner) if(line instanceof BlockElement) {
+		if(line.type === BE_LIST) {
+			while (top && !(isPrefix(stack[top].indent, line.indent) && stack[top].leader === line.leader)) {
+				stack[top - 1].push(stack[top]);
+				top -= 1;
+			}
+			if(stack[top].indent === line.indent && stack[top].leader === line.leader) {
+				stack[top].push(line.body)
+			} else {
+				top += 1;
+				stack[top] = [listType[line.leader], line.body];
+				stack[top].indent = line.indent;
+				stack[top].leader = line.leader;
+			}
+		} else if(line.type === BE_NORMAL) {
+			while (top && !isPrefix(stack[top].indent, line.indent)) {
+				stack[top - 1].push(stack[top]);
+				top -= 1;
+			}
+			if (top) { // We stop at a list stack frame. We should push this paragraph to the last item of the list.
+				var current = stack[top];
+				if(current[current.length - 1] instanceof Array && current[current.length - 1][0] instanceof Reference && current[current.length - 1][0].name === '.cons_block'){
+					current[current.length - 1].push(line.body)
+				} else {
+					current[current.length - 1] = [new Reference('.cons_block'),
+						current[current.length - 1],
+						line.body]
+				}
+			} else {
+				stack[top].push(line.body);
+			}
+		}
+	} else {
+		while(top) {
+			stack[top - 1].push(stack[top]);
+			top--;
+		}
+		stack[top].push(line);
+	}
+	while(top) {
+		stack[top - 1].push(stack[top]);
+		top--;
+	}
+	this.body.push(stack[0])
+}
+====
+
+------ chapter : Main interpreter ------
+
+==== js : tangled/main.js ====
+const types = require('./types');
+const parser = require('./parser.js');
+const util = require('util');
+const fs = require('fs');
+var ast = parser.parse(fs.readFileSync(process.argv[2], 'utf-8'), types);
+console.log(util.inspect(ast, {depth: null}));
+====
+
+==== js : tangled/types.js ====
+class Reference {
+	constructor(name) {
+		this.name = name;
+	}
+}
+class Position {
+	constructor(source, offset) {
+		this.source = source;
+		this.offset = offset;
+	}
+}
+
+exports.Reference = Reference;
+exports.Position = Position;
+====
+
+==== source : tangled/makefile ====
+parser.js : syntax.pegjs
+	pegjs $< $@
 ====
