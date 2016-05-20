@@ -7,22 +7,23 @@
 	const listType = {
 		"-" : new Reference('.ul'),
 		"*" : new Reference('.ul'),
+		"+" : new Reference('.ul'),
 		"#" : new Reference('.ol')
 	}
-	class LineItem {
+	class BlockElement {
 		constructor(type, indent, leader, body) {
 			this.type = type;
 			this.indent = indent;
 			this.leader = leader;
 			this.body = body;
-			this.inner = []
+			this.inner = [];
 		}
 		organizeInneritems(){
 			// scans inner items of a lineItem and deal with lists
 			var stack = [[new Reference('.cons_block')]];
 			var top = 0;
-			for(let line of this.inner) if(line instanceof LineItem) {
-				if(line.type === LINE_LIST) {
+			for(let line of this.inner) if(line instanceof BlockElement) {
+				if(line.type === BE_LIST) {
 					while (top && !(isPrefix(stack[top].indent, line.indent) && stack[top].leader === line.leader)) {
 						stack[top - 1].push(stack[top]);
 						top -= 1;
@@ -35,7 +36,7 @@
 						stack[top].indent = line.indent;
 						stack[top].leader = line.leader;
 					}
-				} else if(line.type === LINE_NORMAL) {
+				} else if(line.type === BE_NORMAL) {
 					while (top && !isPrefix(stack[top].indent, line.indent)) {
 						stack[top - 1].push(stack[top]);
 						top -= 1;
@@ -67,25 +68,22 @@
 			this.body.push(stack[0])
 		}
 	}
-	const LINE_START = Symbol('LINE_START');
-	const LINE_END = Symbol('LINE_END');
-	const LINE_NORMAL = Symbol('LINE_NORMAL');
-	const LINE_LIST = Symbol('LINE_LIST');
-	const LINE_EMPTY = Symbol('LINE_EMPTY');
+	const BE_START = Symbol('BE_START');
+	const BE_END = Symbol('BE_END');
+	const BE_NORMAL = Symbol('BE_NORMAL');
+	const BE_LIST = Symbol('BE_LIST');
+	const BE_EMPTY_LINE = Symbol('BE_EMPTY_LINE');
 	
 	function formLine (content) {
 		if(content.length === 1) return content[0]
 		else return [new Reference('.cons_line')].concat(content)
 	};
 	var storedVerbatimTerminator;
-	var nVerbatimTests = 0;
-	var textIndentStack = [];
-	var textIndent = "";
 	function formBlock(lines) {
-		var stack = [new LineItem(LINE_NORMAL, null, null, [new Reference('.cons_block')])];
+		var stack = [new BlockElement(BE_NORMAL, null, null, [new Reference('.cons_block')])];
 		var top = 0;
 		for(let line of lines) {
-			if(line.type === LINE_START) {
+			if(line.type === BE_START) {
 				if(top && stack[top].leader === line.leader) {
 					stack[top].organizeInneritems();
 					stack[top - 1].inner.push(stack[top].body);
@@ -93,7 +91,7 @@
 				}
 				top += 1;
 				stack[top] = line;
-			} else if (line.type === LINE_END) {
+			} else if (line.type === BE_END) {
 				// find the recentmost line item matching line.leader
 				var found = false;
 				for(var k = top; k > 0; k--) {
@@ -132,7 +130,7 @@
 		} else if(last instanceof Reference && last.name.slice(-leader.length, last.name.length) === leader) {
 			last.name = last.name.slice(0, -leader.length)
 			return form
-		} else if(last instanceof Array && last[0] instanceof Reference && last[0].name === '.lit') {
+		} else if(last instanceof Array && last[0] instanceof Reference && (last[0].name === '.lit' || last[0].name === '.vbt')) {
 			last[1] = last[1].slice(0, -leader.length);
 			return form;
 		} else if(last instanceof Array && last[0] instanceof Reference && last[0].name === '.cons_line') {
@@ -153,58 +151,73 @@ embeddedBlock = head:blockStart rear:(LINE_BREAK blockElement)* {
 	return formBlock([head].concat(rear.map(x=>x[1])))
 }
 
-blockElement = emptyLineElement/verbatimBlock/verbatimLineInvoke/blockEnd/blockStart/listItem/paragraph
+blockElement = emptyLineElement/verbatimBlock/verbatimLineInvoke/blockEnd/blockStart/listItem/paragraphElement
 
 emptyLineElement = [ \t]* &LINE_BREAK {
-	return new LineItem(LINE_EMPTY, null, null, null);
+	return new BlockElement(BE_EMPTY_LINE, null, null, null);
 }
-blockEnd = indent:indentation leader:normalLeader &(LINE_BREAK/"}") {
-	return new LineItem(LINE_END, indent, leader, null)
+blockEnd = indent:INDENTATION leader:NORMAL_LEADER &(LINE_BREAK/"}") {
+	return new BlockElement(BE_END, indent, leader, null)
 }
-blockStart = begins:POS indent:indentation leader:normalLeader OPTIONAL_LINE_CALL_SPACES it:linecallItems ends:POS {
+blockStart = begins:POS indent:INDENTATION leader:NORMAL_LEADER OPTIONAL_LINE_CALL_SPACES it:linecallItems ends:POS {
 	var itsSource = input.slice(begins.offset, ends.offset);
 	if(itsSource.length >= leader.length * 2 && itsSource.slice(-leader.length, itsSource.length) === leader) {
-		return new LineItem(LINE_START, indent, leader, removeTrailingLeader(it, leader))
+		return new BlockElement(BE_START, indent, leader, removeTrailingLeader(it, leader))
 	} else {
-		return new LineItem(LINE_NORMAL, indent, leader, it)
+		return new BlockElement(BE_NORMAL, indent, leader, it)
 	}
 }
 
 
-verbatimLineInvoke = indent:indentation leader:verbatimLeader OPTIONAL_LINE_CALL_SPACES it:verbatimExpressionItems tail:(OPTIONAL_LINE_CALL_SPACES ":" $([^\r\n]+)) {
-	return new LineItem(LINE_NORMAL, indent, leader, it.concat([tail[2]]))
+verbatimLineInvoke = begins:POS indent:INDENTATION leader:VERBATIM_LEADER OPTIONAL_LINE_CALL_SPACES it:verbatimLinecallItems ends:POS &{
+	var itsSource = input.slice(begins.offset, ends.offset);
+	return !(itsSource.length >= leader.length * 2 && itsSource.slice(-leader.length, itsSource.length) === leader);
+} {
+	return new BlockElement(BE_NORMAL, indent, leader, it)
 }
 
 verbatimBlock = h:verbatimBlockStart LINE_BREAK b:verbatimLines t:verbatimBlockEnd {
-	h.body.push(b.join(''));
-	return h;
-}
-verbatimBlockStart = indent:indentation leader:verbatimLeader OPTIONAL_LINE_CALL_SPACES it:verbatimExpressionItems
-	&{return (it[it.length - 1] instanceof Reference && it[it.length - 1].name === leader)} {
-		storedVerbatimTerminator = leader;
-		return new LineItem(LINE_NORMAL, indent, leader, it);
+	var a = [h];
+	var k = [];
+	for(let item of b){
+		if(typeof item === 'string'){
+			k.push(item)
+		} else {
+			a[a.length - 1].body.push(k.join(''));
+			a.push(item);
+			k = [];
+		}
 	}
-verbatimLines = verbatimLine*
-verbatimLine = body:$([^\r\n]*) LINE_BREAK &{return body !== storedVerbatimTerminator} { return body + "\n" }
-verbatimBlockEnd = trailer:verbatimLeader &(LINE_BREAK/"}") & { return trailer == storedVerbatimTerminator }
+	a[a.length - 1].body.push(k.join(''));
+	return formBlock(a);
+}
+verbatimBlockStart = begins:POS indent:INDENTATION leader:VERBATIM_LEADER OPTIONAL_LINE_CALL_SPACES it:verbatimLinecallItems ends:POS &{
+	var itsSource = input.slice(begins.offset, ends.offset);
+	return itsSource.length >= leader.length * 2 && itsSource.slice(-leader.length, itsSource.length) === leader;
+} {
+	storedVerbatimTerminator = leader;
+	return new BlockElement(BE_NORMAL, indent, leader, removeTrailingLeader(it, leader));
+}
+verbatimLines = (verbatimLine / verbatimTranspose)*
+verbatimTranspose = begins:POS indent:INDENTATION leader:VERBATIM_LEADER OPTIONAL_LINE_CALL_SPACES it:verbatimLinecallItems ends:POS &{
+	if(leader != storedVerbatimTerminator) return false;
+	var itsSource = input.slice(begins.offset, ends.offset);
+	return itsSource.length >= leader.length * 2 && itsSource.slice(-leader.length, itsSource.length) === leader;
+} {
+	return new BlockElement(BE_NORMAL, indent, leader, removeTrailingLeader(it, leader));
+}
+verbatimLine = body:$([^\r\n]*) LINE_BREAK &{return !isPrefix(storedVerbatimTerminator, body)} { return body + "\n" }
+verbatimBlockEnd = trailer:VERBATIM_LEADER &(LINE_BREAK/"}") & { return trailer == storedVerbatimTerminator }
 
-listItem = indent:indentation leader:$("-" !"-" / "*") body:line {
-	return new LineItem(LINE_LIST, indent, leader, body)
+listItem = indent:INDENTATION leader:$("-" !"-" / "+" !"+" / "*") body:textline {
+	return new BlockElement(BE_LIST, indent, leader, body)
 }
 
-paragraph = indent:indentation body:line {
-	return new LineItem(LINE_NORMAL, indent, null, body)
+paragraphElement = indent:INDENTATION body:textline {
+	return new BlockElement(BE_NORMAL, indent, null, body)
 }
 
-expression
-	= invoke / quote / verbatim / textblock / parting / literal
-textblock
-	= "{" inside:line "}" {
-		return inside
-	}
-	/ "{" inside:embeddedBlock "}" { return inside }
-
-line = ![*+\-#=] content:lineCont { return content }
+textline = ![*+\-#=] content:lineCont { return content }
 lineCont = content:lineitem* { return formLine(content) }
 
 lineitem                  = invoke / lineVerbatim / textblock / lineDoubleStar / lineSingleStar / lineEscape / lineText
@@ -220,6 +233,13 @@ lineText "Text" = t:$([^\r\n\[\{\\\}\]*`]+) { return [new Reference('.lit'), t] 
 lineDoubleStar = "**" inner:lineitemWithoutDoubleStar* "**" { return [new Reference('.inline**'), formLine(inner)] }
 lineSingleStar = "*" !"*" inner:lineitemWithoutSingleStar* "*" { return [new Reference('.inline*'), formLine(inner)] }
 
+expression
+	= invoke / quote / verbatim / textblock / parting / literal
+textblock
+	= "{" inside:textline "}" {
+		return inside
+	}
+	/ "{" inside:embeddedBlock "}" { return inside }
 
 expressionitems
 	= head:expression rear:(OPTIONAL_EXPRESSION_SPACES expression)* tail:(OPTIONAL_EXPRESSION_SPACES ":" lineCont)? {
@@ -243,13 +263,19 @@ linecallItems
 		}
 		return res;
 	}
-verbatimExpressionItems = head:expression rear:(OPTIONAL_LINE_CALL_SPACES expression)* {
-	var res = [head]
-	for(var j = 0; j < rear.length; j++){
-		res.push(rear[j][1])
-	};
-	return res;
-}
+
+verbatimLinecallItems
+	= head:expression rear:(OPTIONAL_LINE_CALL_SPACES expression)* tail:(OPTIONAL_LINE_CALL_SPACES ":" $([^\r\n]+))? {
+		var res = [head]
+		for(var j = 0; j < rear.length; j++){
+			res.push(rear[j][1])
+		};
+		if(tail) {
+			res.push([new Reference('.vbt'), tail[2]]);
+		}
+		return res;
+	}
+
 invoke
 	= begins:POS "["
 	  OPTIONAL_EXPRESSION_SPACES
@@ -344,9 +370,9 @@ identifier "Identifier"
 		return ref;
 	}
 
-normalLeader = $("-" "-"+) / $("+" "+"+)
-verbatimLeader = $("=" "="+)
-indentation = $([ \t]*)
+NORMAL_LEADER = $("-" "-"+) / $("+" "+"+)
+VERBATIM_LEADER = $("=" "="+)
+INDENTATION = $([ \t]*)
 
 LINE_BREAK "Line Break"
 	= "\r"? "\n" 

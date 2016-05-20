@@ -1,0 +1,249 @@
+-------- Literate --------
+
+------ chapter : Introduction ------
+
+The JK is a document-generation language using Lisp-style interpreter kernel. It is designed to be able to produce complex document from it, while maintaining its syntax simple and easy-to-read. The JK interpreter itself can be used to product its own code from its own documentation, which is similar to Knuth's WEB, which is used to produce TeX.
+
+The basic syntax of JK is based on Markdown, though some features are not included. However, two main enhancements are included to make it able to create complex documentations:
+
+ * Embedded blocks
+ * and Line Invocations
+
+There are four main targets:
+
+==== tangle-target : tangled/syntax.pegjs
+==== tangle-target : tangled/makefile
+==== tangle-target : tangled/main.js
+==== tangle-target : tangled/types.js
+
+------ chapter : Syntax ------
+
+The syntax of JK is defined by syntax file `syntax.js`. Parsing Expression Grammar is power enough to define JK's syntax.
+
+==== append-pegjs : tangled/syntax.pegjs ====
+{
+<<Syntax function definitions>>
+}
+<<Syntax definitions>>
+<<Token definitions>>
+====
+
+To build AST while parsing, we should import key types first:
+==== append-js : Syntax function definitions ====
+const Reference = options.Reference;
+const Position = options.Position;
+====
+
+A JK document itself is a "block", and a "block" is formed by some "block elements" The procedure used to combine block elements into blocks is `formBlock`. Block elements are separated by a line break.
+==== append-pegjs : Syntax definitions ====
+start = block
+block = items:(blockElement LINE_BREAK)+ {
+	return formBlock(items.map(x=>x[0]))
+}
+==== append-pegjs : Token definitions ====
+LINE_BREAK "Line Break"
+	= "\r"? "\n"
+==== append-js : Syntax function definitions ====
+function formBlock(lines) {
+<<Block formation>>
+}
+====
+
+A Block element can be:
+
+ * an Empty line
+ * a Verbatim Embedded Block
+ * a Verbatim Line Invoke
+ * an Embedded Block Start Mark or a Line Invoke
+ * an Embedded Block End Mark
+ * a List Item
+ * or a simple Paragraph Element.
+
+==== append-pegjs : Syntax definitions ====
+blockElement = emptyLineElement
+             / verbatimBlock
+             / verbatimLineInvoke
+             / blockEnd
+             / blockStart
+             / listItem
+             / paragraphElement
+<<BE syntaxes>>
+====
+
+For every block element list above, when an element is parsed, a `BlockElement` object is created. Each object contains four properties:
+
+ * its type
+ * its indentation
+ * its leader
+ * and its form, contains its inner structure
+
+==== append-js : Syntax function definitions ====
+<<BlockElement types>>
+class BlockElement {
+	constructor(type, indent, leader, body) {
+		this.type = type;
+		this.indent = indent;
+		this.leader = leader;
+		this.body = body;
+		this.inner = [];
+	}
+	<<BlockElement methods>>
+}
+====
+
+Given that Line Invocations and Verbatim Blocks are a subtype of normal blocks, there are five distinct BlockElement types:
+==== js : BlockElement types ====
+const BE_START = Symbol('BE_START');
+const BE_END = Symbol('BE_END');
+const BE_NORMAL = Symbol('BE_NORMAL');
+const BE_LIST = Symbol('BE_LIST');
+const BE_EMPTY_LINE = Symbol('BE_EMPTY_LINE');
+====
+
+An Empty Line is a line contianing only spaces.
+==== append-pegjs : BE syntaxes ====
+emptyLineElement = [ \t]* &LINE_BREAK {
+	return new BlockElement(BE_EMPTY_LINE, null, null, null);
+}
+====
+
+A list item is a "paragraph" with a list bullet before it.
+==== append-pegjs : BE syntaxes ====
+listItem = indent:INDENTATION leader:$("-" !"-" / "+" !"+" / "*") body:textline {
+	return new BlockElement(BE_LIST, indent, leader, body)
+}
+====
+
+And a paragraph is just a, well, paragraph. However we need to wrap it into a `BlockElement`:
+==== append-pegjs : BE syntaxes ====
+paragraphElement = indent:INDENTATION body:textline {
+	return new BlockElement(BE_NORMAL, indent, null, body)
+}
+====
+
+These types are simple. For an Embedded Block Start Mark, it contains with two or more hyphens or plus marks, followed by a macro call, and a copy of its leading characters, while a Line Invocation only lacks the last part. Considering their similarity, we can use a same syntax to define BOTH of them. Here is the definition: we define a `blockStart` element with two position marks, the indentation, the leader, and a macro call. We will check that whether its source code has its leader at its end either. If so, we will treat it an Start Mark, rather a Line Invocation.
+==== append-pegjs : BE syntaxes ====
+NORMAL_LEADER = $("-" "-"+) / $("+" "+"+)
+blockStart = begins:POS indent:INDENTATION leader:NORMAL_LEADER OPTIONAL_LINE_CALL_SPACES it:linecallItems ends:POS {
+	<<Grab the source between `begins` and `ends` >>
+	if(<<It is a start line>>) {
+		return new BlockElement(BE_START, indent, leader, removeTrailingLeader(it, leader))
+	} else {
+		return new BlockElement(BE_NORMAL, indent, leader, it)
+	}
+}
+==== js : Grab the source between `begins` and `ends` ====
+var itsSource = input.slice(begins.offset, ends.offset);
+==== js : It is a start line ====
+(itsSource.length >= leader.length * 2 && itsSource.slice(-leader.length, itsSource.length) === leader)
+====
+
+The `POS` token is used to grab current offset when parsing:
+==== append-pegjs : Token definitions ====
+POS = "" { return new Position(null, offset()) }
+====
+
+However, if the line we matched is indeed a Start Mark, its body form now contains its trailing "leader", and we have to remove it. The function `removeTrailingLeader` removes the unused "leader" characters within its form.
+==== append-js : Syntax function definitions ====
+function removeTrailingLeader(form, leader) {
+	var last = form[form.length - 1];
+	if(last instanceof Reference && last.name === leader) {
+		return form.slice(0, -1)
+	} else if(last instanceof Reference && last.name.slice(-leader.length, last.name.length) === leader) {
+		last.name = last.name.slice(0, -leader.length)
+		return form
+	} else if(last instanceof Array && last[0] instanceof Reference && (last[0].name === '.lit' || last[0].name === '.vbt')) {
+		last[1] = last[1].slice(0, -leader.length);
+		return form;
+	} else if(last instanceof Array && last[0] instanceof Reference && last[0].name === '.cons_line') {
+		form[form.length - 1] = removeTrailingLeader(last, leader);
+		return form;
+	} else {
+		return form;
+	}
+}
+====
+
+A Ending Mark is a "leader" with a line break right after it. It is converted into a `BE_END` type `BlockElement`.
+==== append-pegjs : BE syntaxes ====
+blockEnd = indent:INDENTATION leader:NORMAL_LEADER &(LINE_BREAK/"}") {
+	return new BlockElement(BE_END, indent, leader, null)
+}
+====
+
+The Verbatim blocks are similar to the normal ones, with leader characters changed to equal marks. However, their syntax definitions are way different. A "most complex" Verbatim Block may look like this:
+
+====== pre ======
+==== fn1 arg : chars ====
+segment 1
+segment 1
+==== fn2 arg : chars ====
+code segment 2
+code segment 2
+code segment 2
+==== fn3 arg : chars ====
+segment 3
+segment 3
+====
+======
+
+We will use this model:
+== pre ==
+leader START LINE
+(BODY LINE | TRANSFER LINE)*
+leader
+==
+
+A Verbatim block starts with a "start line", following some body lines, or some "transfer line", which is another "start line" sharing the same leader, and ends with a line contains only the leader. We will convert these lines into a series of Verbatim line calls.
+
+Its full definition is:
+==== append-pegjs : BE syntaxes ====
+verbatimBlock = h:verbatimBlockStart LINE_BREAK b:verbatimBlockBody t:verbatimBlockEnd {
+	<<Verbatim block line combining>>
+}
+verbatimBlockStart = begins:POS indent:INDENTATION leader:VERBATIM_LEADER OPTIONAL_LINE_CALL_SPACES it:verbatimLinecallItems ends:POS &{
+	<<Grab the source between `begins` and `ends` >>
+	return (<<Whether it is a Verbatim Start Line>>);
+} {
+	storedVerbatimTerminator = leader; // Store the current leader
+	return new BlockElement(BE_NORMAL, indent, leader, removeTrailingLeader(it, leader));
+}
+verbatimBlockBody = (verbatimLine / verbatimTransfer)*
+verbatimTransfer = begins:POS indent:INDENTATION leader:VERBATIM_LEADER OPTIONAL_LINE_CALL_SPACES it:verbatimLinecallItems ends:POS &{
+	<<Check whether they share the same leader>>;
+	<<Grab the source between `begins` and `ends` >>
+	return (<<Whether it is a Verbatim Start Line>>);
+} {
+	return new BlockElement(BE_NORMAL, indent, leader, removeTrailingLeader(it, leader));
+}
+verbatimLine = body:$([^\r\n]*) LINE_BREAK &{return !isPrefix(storedVerbatimTerminator, body)} { return body + "\n" }
+verbatimBlockEnd = trailer:VERBATIM_LEADER &(LINE_BREAK/"}") & { return trailer == storedVerbatimTerminator }
+==== js : Verbatim block line combining ====
+var a = [h];
+var k = [];
+for(let item of b) {
+	if(typeof item === 'string') {
+		k.push(item)
+	} else {
+		a[a.length - 1].body.push(k.join(''));
+		a.push(item);
+		k = [];
+	}
+}
+a[a.length - 1].body.push(k.join(''));
+return formBlock(a);
+==== js : Check whether they share the same leader ====
+if(leader != storedVerbatimTerminator) return false
+==== js : Whether it is a Verbatim Start Line ====
+<<It is a start line>>
+====
+
+The definition of a Verbatim Line Invoke is simpler, we just parse the same line like verbatimBlockStart, but finds lines without a leader at its end:
+==== append-pegjs : BE syntaxes ====
+verbatimLineInvoke = begins:POS indent:INDENTATION leader:VERBATIM_LEADER OPTIONAL_LINE_CALL_SPACES it:verbatimLinecallItems ends:POS &{
+	<<Grab the source between `begins` and `ends` >>
+	return !(<<Whether it is a Verbatim Start Line>>);
+} {
+	return new BlockElement(BE_NORMAL, indent, leader, it)
+}
+====
