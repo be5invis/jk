@@ -481,9 +481,7 @@ function formBlock(lines) {
 	for(let line of lines) {
 		if(line.type === BE_START) {
 			if(top && stack[top].leader === line.leader) {
-				stack[top].organizeInneritems();
-				stack[top - 1].inner.push(stack[top].body);
-				top -= 1
+				<<Shrink block formation stack>>
 			}
 			top += 1;
 			stack[top] = line;
@@ -500,18 +498,14 @@ function formBlock(lines) {
 				found = top;
 			}
 			if(top) {
-				stack[top].organizeInneritems();
-				stack[top - 1].inner.push(stack[top].body);
-				top -= 1
+				<<Shrink block formation stack>>
 			}
 		} else {
 			stack[top].inner.push(line);
 		}
 	}
 	while(top) {
-		stack[top].organizeInneritems();
-		stack[top - 1].inner.push(stack[top].body);
-		top -= 1
+		<<Shrink block formation stack>>
 	}
 	stack[0].organizeInneritems();
 	if(stack[0].body.length === 2 && stack[0].body[0] instanceof Reference && stack[0].body[0].name === '.cons_block'){
@@ -519,6 +513,10 @@ function formBlock(lines) {
 	}
 	return stack[0].body;
 }
+==== js : Shrink block formation stack ====
+stack[top].organizeInneritems();
+stack[top - 1].inner.push(stack[top].body);
+top -= 1;
 ==== append-js : BlockElement methods ====
 organizeInneritems(){
 	// scans inner items of a lineItem and deal with lists
@@ -527,8 +525,7 @@ organizeInneritems(){
 	for(let line of this.inner) if(line instanceof BlockElement) {
 		if(line.type === BE_LIST) {
 			while (top && !(isPrefix(stack[top].indent, line.indent) && stack[top].leader === line.leader)) {
-				stack[top - 1].push(stack[top]);
-				top -= 1;
+				<<Shrink blockElement formation stack>>
 			}
 			if(stack[top].indent === line.indent && stack[top].leader === line.leader) {
 				stack[top].push(line.body)
@@ -540,34 +537,33 @@ organizeInneritems(){
 			}
 		} else if(line.type === BE_NORMAL) {
 			while (top && !isPrefix(stack[top].indent, line.indent)) {
-				stack[top - 1].push(stack[top]);
-				top -= 1;
+				<<Shrink blockElement formation stack>>
 			}
 			if (top) { // We stop at a list stack frame. We should push this paragraph to the last item of the list.
 				var current = stack[top];
-				if(current[current.length - 1] instanceof Array && current[current.length - 1][0] instanceof Reference && current[current.length - 1][0].name === '.cons_block'){
-					current[current.length - 1].push(line.body)
+				var last = current[current.length - 1];
+				if(last instanceof Array && last[0] instanceof Reference && last[0].name === '.cons_block'){
+					last.push(line.body)
 				} else {
-					current[current.length - 1] = [new Reference('.cons_block'),
-						current[current.length - 1],
-						line.body]
+					last = [new Reference('.cons_block'), last, line.body]
 				}
 			} else {
 				stack[top].push(line.body);
 			}
 		}
 	} else {
-		while(top) {
-			stack[top - 1].push(stack[top]);
-			top--;
-		}
+		<<Flush blockElement formation stack>>
 		stack[top].push(line);
 	}
-	while(top) {
-		stack[top - 1].push(stack[top]);
-		top--;
-	}
+	<<Flush blockElement formation stack>>
 	this.body.push(stack[0])
+}
+==== js : Shrink blockElement formation stack ====
+	stack[top - 1].push(stack[top]);
+	top -= 1;
+==== js : Flush blockElement formation stack ====
+while(top) {
+	<<Shrink blockElement formation stack>>
 }
 ====
 
