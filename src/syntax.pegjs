@@ -1,4 +1,18 @@
 {
+	class LineItem {
+		constructor(type, indent, leader, body){
+			this.type = type;
+			this.indent = indent;
+			this.leader = leader;
+			this.body = body;
+		}
+	}
+	const LINE_START = Symbol('LINE_START');
+	const LINE_END = Symbol('LINE_END');
+	const LINE_NORMAL = Symbol('LINE_NORMAL');
+	const LINE_UL = Symbol('LINE_UL');
+	const LINE_OL = Symbol('LINE_OL');
+	
 	const Reference = options.Reference;
 	const Position = options.Position;
 	const formLine = function(content) {
@@ -15,9 +29,46 @@
 	var textIndent = "";
 }
 
-start = line
+start = x:blockElement NEWLINE { return x }
+
+blockElement = verbatimBlock / verbatimLineInvoke/blockEnd/blockStart/listItem/paragraph
+
+blockEnd = indent:indentation leader:normalLeader &NEWLINE {
+	return new LineItem(LINE_END, indent, leader, null)
+}
+blockStart = indent:indentation leader:normalLeader OPTIONAL_LINE_CALL_SPACES it:linecallItems {
+	if(it[it.length - 1] instanceof Reference && it[it.length - 1].name === leader){
+		return new LineItem(LINE_START, indent, leader, it.slice(0, -1))
+	} else {
+		return new LineItem(LINE_NORMAL, indent, leader, it)
+	}
+}
 
 
+verbatimLineInvoke = indent:indentation leader:verbatimLeader OPTIONAL_LINE_CALL_SPACES it:verbatimExpressionItems tail:(OPTIONAL_LINE_CALL_SPACES ":" $([^\r\n]+)) {
+	return new LineItem(LINE_NORMAL, indent, leader, it.concat([tail[2]]))
+}
+
+verbatimBlock = h:verbatimBlockStart NEWLINE b:verbatimLines t:verbatimBlockEnd {
+	h.body.push(b.join(''));
+	return h;
+}
+verbatimBlockStart = indent:indentation leader:verbatimLeader OPTIONAL_LINE_CALL_SPACES it:verbatimExpressionItems
+	&{return (it[it.length - 1] instanceof Reference && it[it.length - 1].name === leader)} {
+		storedVerbatimTerminator = leader;
+		return new LineItem(LINE_NORMAL, leader, it);
+	}
+verbatimLines = verbatimLine*
+verbatimLine = body:$([^\r\n]*) NEWLINE &{return body !== storedVerbatimTerminator} { return body + "\n" }
+verbatimBlockEnd = trailer:verbatimLeader & { return trailer == storedVerbatimTerminator }
+
+listItem = indent:indentation leader:$("-" !"-" / "*") body:line {
+	return new LineItem(LINE_NORMAL, indent, leader, body)
+}
+
+paragraph = indent:indentation line {
+	return new LineItem(LINE_NORMAL, indent, null, body)
+}
 
 expression
 	= invoke / quote / verbatim / textblock / parting / literal
@@ -26,18 +77,11 @@ textblock
 		return inside
 	}
 
-line = ![+\-#=] content:lineitem* { return formLine(content) }
+line = ![*+\-#=] content:lineitem* { return formLine(content) }
 
-lineitem                  = lineInvoke / lineVerbatim / textblock / lineDoubleStar / lineSingleStar / lineEscape / lineText
-lineitemWithoutDoubleStar = lineInvoke / lineVerbatim / textblock                  / lineSingleStar / lineEscape / lineText
-lineitemWithoutSingleStar = lineInvoke / lineVerbatim / textblock / lineDoubleStar                  / lineEscape / lineText
-
-lineInvoke = head:invoke rear:(lineVerbatim/textblock)? {
-	if(rear && rear.length)
-		return head.concat([rear]) 
-	else
-		return head
-}
+lineitem                  = invoke / lineVerbatim / textblock / lineDoubleStar / lineSingleStar / lineEscape / lineText
+lineitemWithoutDoubleStar = invoke / lineVerbatim / textblock                  / lineSingleStar / lineEscape / lineText
+lineitemWithoutSingleStar = invoke / lineVerbatim / textblock / lineDoubleStar                  / lineEscape / lineText
 
 lineVerbatim = it:verbatim { return [new Reference('.verbatim'), it] }
              / it:codeSpan { return [new Reference('.codespan'), it] }
@@ -50,13 +94,34 @@ lineSingleStar = "*" !"*" inner:lineitemWithoutSingleStar* "*" { return [new Ref
 
 
 expressionitems
-	= head:expression rear:(OPTIONAL_EXPRESSION_SPACES expression)* { 
+	= head:expression rear:(OPTIONAL_EXPRESSION_SPACES expression)* tail:(OPTIONAL_EXPRESSION_SPACES ":" line)? {
 		var res = [head]
 		for(var j = 0; j < rear.length; j++){
 			res.push(rear[j][1])
 		};
+		if(tail){
+			res.push(tail[2]);
+		}
 		return res;
 	}
+linecallItems
+	= head:expression rear:(OPTIONAL_EXPRESSION_SPACES expression)* tail:(OPTIONAL_EXPRESSION_SPACES ":" line)? {
+		var res = [head]
+		for(var j = 0; j < rear.length; j++){
+			res.push(rear[j][1])
+		};
+		if(tail){
+			res.push(tail[2]);
+		}
+		return res;
+	}
+verbatimExpressionItems = head:expression rear:(OPTIONAL_LINE_CALL_SPACES expression)* {
+	var res = [head]
+	for(var j = 0; j < rear.length; j++){
+		res.push(rear[j][1])
+	};
+	return res;
+}
 invoke
 	= begins:POS "["
 	  OPTIONAL_EXPRESSION_SPACES
@@ -150,8 +215,10 @@ identifier "Identifier"
 		});
 		return ref;
 	}
-textidentifier "Embedded Identifier"
-	= it:$([a-zA-Z_$] [a-zA-Z0-9_]*) { return new Reference(it) }
+
+normalLeader = $("-" "-"+) / $("+" "+"+)
+verbatimLeader = $("=" "="+)
+indentation = $([ \t]*)
 
 LINE_BREAK "Line Break"
 	= "\r"? "\n" 
@@ -162,6 +229,8 @@ EXPRESSION_SPACE
 	/ COMMENT
 OPTIONAL_EXPRESSION_SPACES
 	= $(EXPRESSION_SPACE*)
+OPTIONAL_LINE_CALL_SPACES
+	= $(SPACE_CHARACTER*)
 SPACE_CHARACTER_OR_NEWLINE "Space Character or Newline"
 	= [\t\v\f \u00A0\u1680\u180E\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A\u202F\u205F\u3000\uFEFF\r\n]
 COMMENT "Comment"
