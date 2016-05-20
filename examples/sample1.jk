@@ -1,0 +1,20 @@
+------ Literate : JK 宏语言系统 ------
+
+--- section : 引言 ---
+
+-- tangle-target 'parser.pegjs'
+-- tangle-target 'main.js'
+-- tangle-target 'makefile'
+
+== define 'parser.pegjs' ==
+<<Syntax Preparation>>
+<<Syntax>>
+==
+
+== define 'Syntax Preparation' ==
+{
+}
+==
+
+--- section : 文法 ---
+--- section : 语义 ---
