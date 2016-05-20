@@ -206,8 +206,8 @@ verbatimTranspose = begins:POS indent:INDENTATION leader:VERBATIM_LEADER OPTIONA
 } {
 	return new BlockElement(BE_NORMAL, indent, leader, removeTrailingLeader(it, leader));
 }
-verbatimLine = body:$([^\r\n]*) LINE_BREAK &{return !isPrefix(storedVerbatimTerminator, body)} { return body + "\n" }
-verbatimBlockEnd = trailer:VERBATIM_LEADER &(LINE_BREAK/"}") & { return trailer == storedVerbatimTerminator }
+verbatimLine = body:$([^\r\n]*) LINE_BREAK &{return !isPrefix(storedVerbatimTerminator, body.trim())} { return body + "\n" }
+verbatimBlockEnd = indent:INDENTATION line:VERBATIM_LEADER &(LINE_BREAK/"}") & { return isPrefix(storedVerbatimTerminator, line) }
 
 listItem = indent:INDENTATION leader:$("-" !"-" / "+" !"+" / "*") body:textline {
 	return new BlockElement(BE_LIST, indent, leader, body)
