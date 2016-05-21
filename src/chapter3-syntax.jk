@@ -1,8 +1,11 @@
 
 ------ chapter : Syntax ------
 
-The syntax of JK is defined by syntax file `syntax.js`. Parsing Expression Grammar is power enough to define JK's syntax.
+The syntax of JK is defined by syntax file `syntax.js`. Parsing Expression Grammar is power enough to define JK's syntax. The parser file is `parser.js`, and is generated from the syntax file:
 
+==== append-source : tangled/makefile ====
+parser.js : syntax.pegjs
+	pegjs $< $@
 ==== append-pegjs : tangled/syntax.pegjs ====
 {
 <<Syntax function definitions>>

@@ -14,8 +14,3 @@ const fs = require('fs');
 var ast = parser.parse(fs.readFileSync(process.argv[2], 'utf-8'), types);
 console.log(util.inspect(ast, {depth: null}));
 ====
-
-==== source : tangled/makefile ====
-parser.js : syntax.pegjs
-	pegjs $< $@
-====

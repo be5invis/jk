@@ -1,4 +1,3 @@
-
 ------ chapter : Introduction ------
 
 The JK is a document-generation language using Lisp-style interpreter kernel. It is designed to be able to produce complex document from it, while maintaining its syntax simple and easy-to-read. The JK interpreter itself can be used to product its own code from its own documentation, which is similar to Knuth's WEB, which is used to produce TeX.
