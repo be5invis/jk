@@ -139,7 +139,7 @@ blockStart = begins:POS indent:INDENTATION leader:NORMAL_LEADER OPTIONAL_LINE_CA
 ==== js : Grab the source between `begins` and `ends` ====
 var itsSource = input.slice(begins.offset, ends.offset);
 ==== js : It is a start line ====
-(itsSource.length >= leader.length * 2 && itsSource.slice(-leader.length, itsSource.length) === leader)
+(itsSource.length >= leader.length * 2 && itsSource.slice(-leader.length, itsSource.length) === leader && !isPrefix(leader, itsSource.slice(- leader.length - 1, itsSource.length)) )
 ====
 
 The `POS` token is used to grab current offset when parsing:
