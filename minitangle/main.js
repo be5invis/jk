@@ -2,6 +2,7 @@ const types = require('./types');
 const parser = require('./parser.js');
 const util = require('util');
 const fs = require('fs');
+const path = require('path');
 
 function getstr(form){
 	if (form instanceof Array) {
@@ -34,6 +35,10 @@ function minitangle(form) {
 			var target = getstr(form[1]).trim();
 			console.log('Tangle target :', target)
 			targets.push(target);
+		} else if (form[0] instanceof types.Reference && form[0].name === 'input') {
+			const filename = getstr(form[1]).trim();
+			const ast = parser.parse(fs.readFileSync(path.resolve(path.dirname(root), filename), 'utf-8'), types);
+			minitangle(ast);
 		} else if(form[0] instanceof types.Reference && h_def[form[0].name]) {
 			var target = getstr(form[1]).trim();
 			map[target] = form[2];
@@ -53,7 +58,8 @@ function crossref(target){
 	})
 }
 
-var ast = parser.parse(fs.readFileSync(process.argv[2], 'utf-8'), types);
+const root = process.argv[2];
+const ast = parser.parse(fs.readFileSync(root, 'utf-8'), types);
 minitangle(ast);
 
 for(let target of targets){

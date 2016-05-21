@@ -1,0 +1,33 @@
+------ chapter : Basic types ------
+
+To build a macro language interpreter, some basic types should be defined.
+
+==== js : tangled/types.js ====
+<<Basic type defs>>
+<<Basic type exports>>
+====
+
+--- section : Reference ---
+A reference indicates a variable reference.
+==== append-js : Basic type defs ====
+class Reference {
+	constructor(name) {
+		this.name = name;
+	}
+}
+==== append-js : Basic type exports ====
+exports.Reference = Reference;
+====
+
+--- section : Position ---
+A position records a position point in the source code
+==== append-js : Basic type defs ====
+class Position {
+	constructor(source, offset) {
+		this.source = source;
+		this.offset = offset;
+	}
+}
+==== append-js : Basic type exports ====
+exports.Position = Position;
+====
