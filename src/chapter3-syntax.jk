@@ -5,7 +5,7 @@ The syntax of JK is defined by syntax file `syntax.js`. Parsing Expression Gramm
 
 ==== append-source : tangled/makefile ====
 parser.js : syntax.pegjs
-	pegjs $< $@
+	pegjs -o $@ $<
 ==== append-pegjs : tangled/syntax.pegjs ====
 {
 <<Syntax function definitions>>
@@ -130,7 +130,7 @@ var itsSource = input.slice(begins.offset, ends.offset);
 
 The `POS` token is used to grab current offset when parsing:
 ==== append-pegjs : Token definitions ====
-POS = "" { return new Position(null, offset()) }
+POS = "" { return new Position(null, location().start.offset) }
 ====
 
 However, if the line we matched is indeed a Start Mark, its body form now contains its trailing "leader", and we have to remove it. The function `removeTrailingLeader` removes the unused "leader" characters within its form.
@@ -432,8 +432,6 @@ identifier "Identifier"
 		return res;
 	}
 ==== pegjs : Spaces ====
-LINE_BREAK "Line Break"
-	= "\r"? "\n" 
 NEWLINE
 	= LINE_BREAK SPACE_CHARACTER_OR_NEWLINE*
 EXPRESSION_SPACE
